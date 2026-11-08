@@ -1,0 +1,7 @@
+.zig-cache/
+zig-out/
+*.o
+*.bin
+*.so
+*.dylib
+*.a
