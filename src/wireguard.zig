@@ -41,7 +41,7 @@ pub const WireGuardTunnel = struct {
         if (out_packet.len < total_len) return error.BufferTooSmall;
 
         // Write header
-        std.mem.writeInt(u32, out_packet[0..4], @intFromEnum(MessageType.data), .little);
+        std.mem.writeInt(u32, out_packet[0..4], @backingInt(MessageType.data), .little);
         std.mem.writeInt(u32, out_packet[4..8], receiver_index, .little);
         std.mem.writeInt(u64, out_packet[8..16], counter, .little);
 
@@ -70,7 +70,7 @@ pub const WireGuardTunnel = struct {
         if (in_packet.len < TRANSPORT_OVERHEAD) return error.PacketTooShort;
 
         const msg_type = std.mem.readInt(u32, in_packet[0..4], .little);
-        if (msg_type != @intFromEnum(MessageType.data)) return error.InvalidMessageType;
+        if (msg_type != @backingInt(MessageType.data)) return error.InvalidMessageType;
 
         const rx_idx = std.mem.readInt(u32, in_packet[4..8], .little);
         if (rx_idx != expected_receiver_index) return error.ReceiverIndexMismatch;

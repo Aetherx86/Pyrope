@@ -96,6 +96,39 @@ pub const ChaCha20 = struct {
     }
 };
 
+/// HChaCha20 (draft-irtf-cfrg-xchacha Section 2.2): derives a 256-bit subkey
+/// from a key and a 128-bit nonce. Same 20 rounds as ChaCha20, without the
+/// final feed-forward addition; output is state words 0..3 and 12..15.
+pub fn hchacha20(key: *const [CHACHA20_KEY_SIZE]u8, nonce16: *const [16]u8) [32]u8 {
+    var w: [16]u32 = undefined;
+    w[0] = CONSTANTS[0];
+    w[1] = CONSTANTS[1];
+    w[2] = CONSTANTS[2];
+    w[3] = CONSTANTS[3];
+    for (0..8) |i| w[4 + i] = std.mem.readInt(u32, key[i * 4 ..][0..4], .little);
+    for (0..4) |i| w[12 + i] = std.mem.readInt(u32, nonce16[i * 4 ..][0..4], .little);
+
+    var round: usize = 0;
+    while (round < 10) : (round += 1) {
+        quarterRound(&w[0], &w[4], &w[8], &w[12]);
+        quarterRound(&w[1], &w[5], &w[9], &w[13]);
+        quarterRound(&w[2], &w[6], &w[10], &w[14]);
+        quarterRound(&w[3], &w[7], &w[11], &w[15]);
+        quarterRound(&w[0], &w[5], &w[10], &w[15]);
+        quarterRound(&w[1], &w[6], &w[11], &w[12]);
+        quarterRound(&w[2], &w[7], &w[8], &w[13]);
+        quarterRound(&w[3], &w[4], &w[9], &w[14]);
+    }
+
+    var out: [32]u8 = undefined;
+    for (0..4) |i| {
+        std.mem.writeInt(u32, out[i * 4 ..][0..4], w[i], .little);
+        std.mem.writeInt(u32, out[16 + i * 4 ..][0..4], w[12 + i], .little);
+    }
+    std.crypto.secureZero(u32, &w);
+    return out;
+}
+
 test "RFC 8439 Section 2.3.2 ChaCha20 Block Function Test Vector" {
     const key = [32]u8{
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -118,4 +151,61 @@ test "RFC 8439 Section 2.3.2 ChaCha20 Block Function Test Vector" {
         0x50, 0x0f, 0xdd, 0x1f, 0xa3, 0x20, 0x71, 0xc4,
     };
     try std.testing.expectEqualSlices(u8, &expected_first_words, block_out[0..16]);
+}
+
+fn hexToBytes(comptime hex: []const u8) [hex.len / 2]u8 {
+    var out: [hex.len / 2]u8 = undefined;
+    _ = std.fmt.hexToBytes(&out, hex) catch unreachable;
+    return out;
+}
+
+const rfc_key = hexToBytes("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+
+test "RFC 8439 Section 2.3.2 full serialized block" {
+    const ctx = ChaCha20.init(&rfc_key, &hexToBytes("000000090000004a00000000"), 1);
+    var out: [64]u8 = undefined;
+    ctx.block(&out);
+    try std.testing.expectEqualSlices(u8, &hexToBytes(
+        "10f1e7e4d13b5915500fdd1fa32071c4c7d1f4c733c068030422aa9ac3d46c4e" ++
+            "d2826446079faa0914c2d705d98b02a2b5129cd1de164eb9cbd083e8a2503c4e",
+    ), &out);
+}
+
+test "RFC 8439 Section 2.4.2 ChaCha20 encryption of the sunscreen plaintext" {
+    const plaintext = "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+    var ctx = ChaCha20.init(&rfc_key, &hexToBytes("000000000000004a00000000"), 1);
+    var ct: [plaintext.len]u8 = undefined;
+    ctx.xorStream(plaintext, &ct);
+    try std.testing.expectEqualSlices(u8, &hexToBytes(
+        "6e2e359a2568f98041ba0728dd0d6981e97e7aec1d4360c20a27afccfd9fae0b" ++
+            "f91b65c5524733ab8f593dabcd62b3571639d624e65152ab8f530c359f0861d8" ++
+            "07ca0dbf500d6a6156a38e088a22b65e52bc514d16ccf806818ce91ab7793736" ++
+            "5af90bbf74a35be6b40b8eedf2785e42874d",
+    ), &ct);
+}
+
+test "draft-irtf-cfrg-xchacha Section 2.2.1 HChaCha20 test vector" {
+    const sub = hchacha20(&rfc_key, &hexToBytes("000000090000004a0000000031415927"));
+    try std.testing.expectEqualSlices(u8, &hexToBytes("82413b4227b27bfed30e42508a877d73a0f9e4d58a74a853c12ec41326d3ecdc"), &sub);
+}
+
+test "ChaCha20 differential test against std.crypto" {
+    var prng = std.Random.DefaultPrng.init(0xc4ac4a20);
+    const rnd = prng.random();
+    var in: [1000]u8 = undefined;
+    var ours: [1000]u8 = undefined;
+    var theirs: [1000]u8 = undefined;
+    for (0..100) |_| {
+        var key: [32]u8 = undefined;
+        var nonce: [12]u8 = undefined;
+        rnd.bytes(&key);
+        rnd.bytes(&nonce);
+        const counter = rnd.int(u32) >> 8;
+        const len = rnd.uintLessThan(usize, in.len + 1);
+        rnd.bytes(in[0..len]);
+        var ctx = ChaCha20.init(&key, &nonce, counter);
+        ctx.xorStream(in[0..len], ours[0..len]);
+        std.crypto.stream.chacha.ChaCha20IETF.xor(theirs[0..len], in[0..len], counter, key, nonce);
+        try std.testing.expectEqualSlices(u8, theirs[0..len], ours[0..len]);
+    }
 }

@@ -36,6 +36,21 @@ zig build test
 zig build -Doptimize=ReleaseFast
 ```
 
+## 0.2.0 변경 사항
+
+- 상수 시간 강화: Poly1305는 44비트 림(limb) 연산으로, X25519는 2^51 기수 필드 연산으로 다시 구현했습니다. 이전 버전은 `u256`/`u512` 나머지 연산을 사용했는데, 이 연산은 가변 시간 나눗셈으로 컴파일됩니다. X25519는 이제 u 좌표의 최상위 비트(bit 255)를 RFC 7748 규정대로 무시합니다.
+- BLAKE2s(RFC 7693), HMAC-BLAKE2s, WireGuard KDF, HChaCha20 및 XChaCha20-Poly1305를 추가했습니다.
+- WireGuard Noise_IKpsk2 개시자(initiator)와 응답자(responder) 핸드셰이크를 완전하게 구현했습니다. MAC1/MAC2 쿠키 처리, TAI64N 재전송 방지, 사전 공유 키를 지원합니다.
+- RFC 6479 슬라이딩 윈도 재전송 필터, 패딩을 포함한 전송 세션, 주입 가능한 시계로 구동되는 재키잉(rekey)/킵얼라이브 타이머를 추가했습니다.
+- CLI 명령 `genkey`, `pubkey`, `selftest [--json]`, `bench [MB] [--json]`을 추가했습니다. `keygen`은 이제 고정 키 대신 보안 난수를 사용합니다.
+- 핸드셰이크 기대값 벡터는 독립적인 Python 참조 구현(`tools/wireguard_kat.py`)으로 생성했으며, CI에서 재현성을 검사합니다. 테스트는 46개입니다.
+
+```bash
+pyrope genkey | pyrope pubkey
+pyrope selftest
+pyrope bench 16 --json
+```
+
 ## 라이선스
 
 MIT License - Copyright (c) 2026 Jeong Hoon Kim
